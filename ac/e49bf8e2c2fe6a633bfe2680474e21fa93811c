@@ -1,0 +1,29 @@
+drivers/infiniband/core/uverbs.h
+  s_d8b135fd1e0c89::t_c0e645c66b225e 188-199
+drivers/infiniband/core/device.c
+  s_d8b135fd1e0c89::t_2b0b454e1c24ae 175-203
+drivers/infiniband/core/rdma_core.c
+  s_d8b135fd1e0c89::t_d9f57c876b2d08 1165-1195
+drivers/infiniband/core/uverbs_std_types_mr.c
+  s_d8b135fd1e0c89::t_20d5160c4dbde4 34-35,45-58,230,275-292,296-297,299,313,338,420-438,442-446,449-451,477-478,492-561,702-711,721,727-728
+include/rdma/ib_verbs.h
+  s_d8b135fd1e0c89::t_67fb2e83de58d8 5030,5041-5046,5104
+include/uapi/rdma/ib_user_ioctl_cmds.h
+  s_d8b135fd1e0c89::t_91ab27150bc67d 571,636-647
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "ace49bf8e2c2fe6a633bfe2680474e21fa93811c",
+  "prompts": {},
+  "sessions": {
+    "s_d8b135fd1e0c89": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ab5b93dd-1960-47b5-bbdf-e8dbb6915614",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
