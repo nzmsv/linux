@@ -1474,6 +1474,7 @@ struct ib_mr *mlx5_ib_reg_user_mr_dmabuf(struct ib_pd *pd, u64 start,
 					 int fd, int access_flags,
 					 struct ib_dmah *dmah,
 					 struct uverbs_attr_bundle *attrs);
+int mlx5_ib_rebind_dmabuf_mr(struct ib_mr *ibmr, int fd);
 int mlx5_ib_advise_mr(struct ib_pd *pd,
 		      enum ib_uverbs_advise_mr_advice advice,
 		      u32 flags,

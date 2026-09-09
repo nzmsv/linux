@@ -59,6 +59,13 @@
 MODULE_AUTHOR("Eli Cohen <eli@mellanox.com>");
 MODULE_DESCRIPTION("Mellanox 5th generation network adapters (ConnectX series) IB driver");
 MODULE_LICENSE("Dual BSD/GPL");
+/*
+ * TODO: HACK -- only needed for the get_dma_buf()/dma_buf_put() pair in
+ * mlx5_ib_rebind_dmabuf_mr()'s update of uverbs core's retained reference.
+ * Goes away with that hack if rebind is promoted to a core verb, since
+ * ib_core already imports this namespace.
+ */
+MODULE_IMPORT_NS("DMA_BUF");
 
 struct mlx5_ib_event_work {
 	struct work_struct	work;

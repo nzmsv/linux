@@ -266,6 +266,51 @@ ADD_UVERBS_METHODS(mlx5_ib_pd,
 		   UVERBS_OBJECT_PD,
 		   &UVERBS_METHOD(MLX5_IB_METHOD_PD_QUERY));
 
+/*
+ * Security policy: none beyond resolving the MR handle, which happens in
+ * the caller's own ufile -- there is no way to name another process's MR.
+ * Rebinding re-points a live rkey at memory the caller nominates, but that
+ * memory is the caller's own, in the caller's own PD, reachable by exactly
+ * the peers it already chose to expose it to. An unprivileged caller can
+ * already achieve the same effect with dereg + reg; the only thing rebind
+ * adds is that the rkey survives, so a peer's in-flight RDMA lands in the
+ * new buffer instead of failing with a bad-key completion. That is a
+ * semantic difference, not a privilege one, so this is left ungated for
+ * the same reason MR_DESTROY is.
+ *
+ * The MR handle is taken UVERBS_ACCESS_WRITE, which holds the uobject
+ * exclusively for the duration -- that is what serialises us against a
+ * concurrent MR_EXPORT_DMABUF_FD (shared access) and against destroy. That
+ * is also what makes it safe for mlx5_ib_rebind_dmabuf_mr() to swap the
+ * dma_buf reference the uobject retains for the export verb.
+ */
+static int UVERBS_HANDLER(MLX5_IB_METHOD_MR_REBIND_DMABUF)(
+	struct uverbs_attr_bundle *attrs)
+{
+	struct ib_mr *mr =
+		uverbs_attr_get_obj(attrs, MLX5_IB_ATTR_REBIND_DMABUF_MR_HANDLE);
+	int fd;
+	int ret;
+
+	ret = uverbs_get_raw_fd(&fd, attrs, MLX5_IB_ATTR_REBIND_DMABUF_FD);
+	if (ret)
+		return ret;
+
+	return mlx5_ib_rebind_dmabuf_mr(mr, fd);
+}
+
+DECLARE_UVERBS_NAMED_METHOD(
+	MLX5_IB_METHOD_MR_REBIND_DMABUF,
+	UVERBS_ATTR_IDR(MLX5_IB_ATTR_REBIND_DMABUF_MR_HANDLE,
+			UVERBS_OBJECT_MR,
+			UVERBS_ACCESS_WRITE,
+			UA_MANDATORY),
+	UVERBS_ATTR_RAW_FD(MLX5_IB_ATTR_REBIND_DMABUF_FD, UA_MANDATORY));
+
+ADD_UVERBS_METHODS(mlx5_ib_mr,
+		   UVERBS_OBJECT_MR,
+		   &UVERBS_METHOD(MLX5_IB_METHOD_MR_REBIND_DMABUF));
+
 const struct uapi_definition mlx5_ib_std_types_defs[] = {
 	UAPI_DEF_CHAIN_OBJ_TREE(
 		UVERBS_OBJECT_PD,
@@ -273,5 +318,8 @@ const struct uapi_definition mlx5_ib_std_types_defs[] = {
 	UAPI_DEF_CHAIN_OBJ_TREE(
 		UVERBS_OBJECT_DEVICE,
 		&mlx5_ib_device),
+	UAPI_DEF_CHAIN_OBJ_TREE(
+		UVERBS_OBJECT_MR,
+		&mlx5_ib_mr),
 	{},
 };

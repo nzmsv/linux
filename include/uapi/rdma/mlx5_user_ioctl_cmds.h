@@ -353,6 +353,38 @@ enum mlx5_ib_pd_methods {
 
 };
 
+/*
+ * MLX5_IB_METHOD_MR_REBIND_DMABUF attributes.
+ *
+ * Re-points a DMA-BUF-backed MR at the dma_buf named by FD, keeping the
+ * MR's lkey/rkey/iova: the mkey is never destroyed, only its address
+ * translations are replaced. Peers holding (rkey, iova) stay valid.
+ *
+ * Intended for checkpoint/restore. At checkpoint the MR can be parked on
+ * a placeholder buffer so the real backing can be freed; at restore it is
+ * pointed back at the recreated allocation. Re-registering instead would
+ * mint a new rkey and break any peer that cached the old one.
+ *
+ * The new dma_buf must be at least as long as the MR's current backing,
+ * and is attached at the same offset so the MR's fixed iova stays legal.
+ *
+ * The caller must ensure no RDMA traffic references this MR for the
+ * duration of the call.
+ *
+ * This lives in the mlx5 driver namespace rather than core deliberately:
+ * a core ib_device_ops entry would change struct ib_device's layout and
+ * so every MODVERSIONS CRC that reaches it, which would force rebuilding
+ * the entire in-tree RDMA module set rather than just mlx5_ib.
+ */
+enum mlx5_ib_mr_methods {
+	MLX5_IB_METHOD_MR_REBIND_DMABUF = (1U << UVERBS_ID_NS_SHIFT),
+};
+
+enum mlx5_ib_mr_rebind_dmabuf_attrs {
+	MLX5_IB_ATTR_REBIND_DMABUF_MR_HANDLE = (1U << UVERBS_ID_NS_SHIFT),
+	MLX5_IB_ATTR_REBIND_DMABUF_FD,
+};
+
 enum mlx5_ib_device_methods {
 	MLX5_IB_METHOD_QUERY_PORT = (1U << UVERBS_ID_NS_SHIFT),
 	MLX5_IB_METHOD_GET_DATA_DIRECT_SYSFS_PATH,

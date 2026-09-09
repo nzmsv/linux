@@ -42,6 +42,10 @@
 #include <rdma/ib_umem_odp.h>
 #include "dm.h"
 #include "mlx5_ib.h"
+/* TODO: HACK -- see mlx5_ib_rebind_dmabuf_mr(); core-private, drop when
+ * rebind becomes a core verb.
+ */
+#include "../../core/uverbs.h"
 #include "umr.h"
 #include "data_direct.h"
 #include "dmah.h"
@@ -1810,6 +1814,265 @@ reg_user_mr_dmabuf_by_data_direct(struct ib_pd *pd, u64 offset,
 end:
 	mutex_unlock(&dev->data_direct_lock);
 	return ret ? ERR_PTR(ret) : crossing_mr;
+}
+
+/*
+ * Re-point an existing DMA-BUF MR at a different dma_buf, keeping the mkey --
+ * and therefore lkey/rkey/iova -- intact. Used at checkpoint/restore, where
+ * the backing allocation has been recreated and the original dma_buf now
+ * describes memory the process no longer owns; re-registering instead would
+ * mint a new rkey and break peers that cached the old one.
+ *
+ * This is a redirection of the same machinery a move_notify/refault cycle
+ * already uses (map pages, rewrite the xlt by UMR), just aimed at a different
+ * dma_buf -- including its handling for a new backing whose optimal page size
+ * differs from the one the mkey currently describes.
+ *
+ * Ordering matters: map the new dma_buf and commit the xlt update *before*
+ * unmapping the old one, so the mkey never references unmapped memory. The
+ * cost is that both are briefly mapped; the benefit is there is no window in
+ * which in-flight DMA could hit freed pages, and a failure part-way leaves
+ * the MR still describing its original backing.
+ */
+int mlx5_ib_rebind_dmabuf_mr(struct ib_mr *ibmr, int fd)
+{
+	struct mlx5_ib_mr *mr = to_mmr(ibmr);
+	struct mlx5_ib_dev *dev = to_mdev(ibmr->device);
+	struct ib_umem_dmabuf *old_umem_dmabuf;
+	struct ib_umem_dmabuf *new_umem_dmabuf;
+	unsigned int page_shift;
+	unsigned long page_size;
+	u64 offset, length, iova;
+	int err;
+
+	if (!is_dmabuf_mr(mr))
+		return -EOPNOTSUPP;
+
+	/*
+	 * data-direct MRs are backed by a second, separately managed mkey on
+	 * the data-direct device; rebinding one would have to re-point both
+	 * in step. Not attempted here.
+	 *
+	 * This also covers the pinned case, which matters more: data-direct is
+	 * exactly reg_user_mr_dmabuf()'s pinned_mode, and a pinned MR's mkey
+	 * is deliberately kept out of the ODP xarray, since a buffer that
+	 * cannot move never needs a refault. Rebinding attaches the new buffer
+	 * with mlx5_ib_dmabuf_attach_ops -- as a dynamic importer -- so the
+	 * exporter could then invalidate an MR whose mkey no fault can ever
+	 * resolve, leaving it permanently non-present.
+	 */
+	if (mr->data_direct)
+		return -EOPNOTSUPP;
+
+	old_umem_dmabuf = to_ib_umem_dmabuf(mr->umem);
+
+	/*
+	 * Refuse if the current backing can be moved out from under us.
+	 * mlx5_ib_dmabuf_invalidate_cb() resolves its mr through
+	 * umem_dmabuf->private and then zaps via mr->umem, so it depends on
+	 * those two naming the same buffer. Publishing the new umem below
+	 * breaks that for the old one until its private is cleared, and the
+	 * two stores are guarded by different dma_resvs, so they cannot be
+	 * made visible together without holding both under a ww_acquire_ctx.
+	 *
+	 * A static exporter cannot call dma_buf_move_notify() at all -- the
+	 * core assumes as much, caching the mapping at attach time when a
+	 * dynamic importer meets one -- so refusing dynamic exporters makes
+	 * the race structurally impossible rather than merely unreachable.
+	 * Both legs of a checkpoint rebind are static in practice (nvidia RM
+	 * going in, udmabuf coming out), so nothing we support is lost.
+	 *
+	 * Only the old buffer is policed. A dynamic *new* exporter is no more
+	 * dangerous here than it is at registration, and refusing it would
+	 * mean rejecting at rebind what reg_user_mr_dmabuf() accepts.
+	 */
+	if (dma_buf_is_dynamic(old_umem_dmabuf->attach->dmabuf))
+		return -EOPNOTSUPP;
+
+	/*
+	 * Reuse the original geometry verbatim. Equal length is required
+	 * because nothing here updates ibmr.length, so the mkey keeps
+	 * describing the original span and the new backing has to cover it.
+	 * (The hardware would allow a change -- len is UMR-modifiable -- but
+	 * this verb deliberately does not offer one.) Not because it fixes
+	 * the xlt entry count, which varies with the page size the new
+	 * backing turns out to want.
+	 * Reusing the offset preserves uverbs' (offset & ~PAGE_MASK) ==
+	 * (iova & ~PAGE_MASK) invariant against the iova the mkey still
+	 * holds.
+	 */
+	offset = old_umem_dmabuf->umem.address;
+	length = old_umem_dmabuf->umem.length;
+	iova = old_umem_dmabuf->umem.iova;
+
+	new_umem_dmabuf = ib_umem_dmabuf_get(&dev->ib_dev, offset, length, fd,
+					     mr->access_flags,
+					     &mlx5_ib_dmabuf_attach_ops);
+	if (IS_ERR(new_umem_dmabuf)) {
+		mlx5_ib_dbg(dev, "rebind: umem_dmabuf get failed (%pe)\n",
+			    new_umem_dmabuf);
+		return PTR_ERR(new_umem_dmabuf);
+	}
+
+	if (new_umem_dmabuf->umem.length != length) {
+		err = -EINVAL;
+		goto err_release_new;
+	}
+
+	/*
+	 * ib_umem_dmabuf_get() does not set iova -- it is not a property of
+	 * the dma_buf but of the MR -- and mlx5_umem_dmabuf_find_best_pgsz()
+	 * reads it. Carry the mkey's iova across explicitly.
+	 */
+	new_umem_dmabuf->umem.iova = iova;
+
+	dma_resv_lock(new_umem_dmabuf->attach->dmabuf->resv, NULL);
+
+	err = ib_umem_dmabuf_map_pages(new_umem_dmabuf);
+	if (err) {
+		dma_resv_unlock(new_umem_dmabuf->attach->dmabuf->resv);
+		goto err_release_new;
+	}
+
+	/* data_direct (KSM) is rejected above, so this is always MTT. */
+	page_size = mlx5_umem_dmabuf_find_best_pgsz(new_umem_dmabuf,
+						    MLX5_MKC_ACCESS_MODE_MTT);
+	if (!page_size) {
+		err = -EINVAL;
+		goto err_unmap_new;
+	}
+
+	/*
+	 * Publish the new umem before the UMR: the update walks mr->umem to
+	 * build the translation, and the invalidate callback for the new
+	 * dma_buf resolves its mr through umem_dmabuf->private.
+	 *
+	 * Between here and old_umem_dmabuf->private being cleared below, the
+	 * old umem still names this mr while mr->umem names the new one. That
+	 * would matter to an invalidate_cb on the old dma_buf; the dynamic
+	 * exporter check above is what makes it unreachable.
+	 */
+	mr->umem = &new_umem_dmabuf->umem;
+	new_umem_dmabuf->private = mr;
+
+	/*
+	 * Mirrors pagefault_dmabuf_mr(): a new backing may want a different
+	 * page size than the mkey currently describes, which needs the
+	 * dedicated pgsz update rather than a plain PAS rewrite.
+	 *
+	 * flags == 0 throughout: we never ask for an explicit enable, because
+	 * the mkey is live going in. The two arms differ in more than the
+	 * update method, though -- mlx5r_umr_dmabuf_update_pgsz() has to zap
+	 * the translation table before it can change log_page_size, so on
+	 * that path the region is briefly non-present.
+	 *
+	 * The mkey itself stays live throughout. ZAP only clears the PRESENT
+	 * bit in the xlt entries; MLX5_MKEY_MASK_FREE is set only under
+	 * MLX5_IB_UPD_XLT_ENABLE, which we never pass, and every UMR here
+	 * carries MLX5_UMR_CHECK_FREE ("fail if free"). Nothing is destroyed
+	 * and mlx5r_umr_update_mr_page_shift() writes mkey_7_0 back from
+	 * mlx5_mkey_variant(), so the index and key value stay ours: the
+	 * window is in presence, not ownership. Callers must have quiesced
+	 * the MR either way.
+	 *
+	 * A shrink cannot overflow the mkey. alloc_cacheable_mr() sizes
+	 * dmabuf mkeys using mlx5_umem_dmabuf_default_pgsz(), which returns
+	 * PAGE_SIZE, so translations_octword_size is always cut for the
+	 * worst case; every page size chosen afterwards is >= PAGE_SIZE and
+	 * so needs no more entries than the mkey already has. That matters
+	 * because there is no UMR mask bit to grow it.
+	 *
+	 * Unlike pagefault_dmabuf_mr() we do not also test mr->dmabuf_faulted.
+	 * That test is there to keep the first population -- which arrives
+	 * with MLX5_IB_UPD_XLT_ENABLE on a still-free mkey -- out of
+	 * mlx5r_umr_dmabuf_update_pgsz(), whose UMRs carry
+	 * MLX5_UMR_CHECK_FREE and would be rejected. A rebind never sees that
+	 * state: the MR is registered, so it has been populated once already.
+	 * Testing it here would be worse than redundant. If the page shift
+	 * moved and we fell through to the plain rewrite, mr->page_shift
+	 * would be updated while the mkey's log_page_size was not -- flags
+	 * without ENABLE or ADDR leave update_translation false, so
+	 * MLX5_MKEY_MASK_PAGE_SIZE is never set -- and software would
+	 * silently disagree with the hardware.
+	 */
+	page_shift = order_base_2(page_size);
+	if (page_shift != mr->page_shift)
+		err = mlx5r_umr_dmabuf_update_pgsz(mr, 0, page_shift);
+	else
+		err = mlx5r_umr_update_mr_pas(mr, 0);
+	if (err) {
+		/*
+		 * mr->page_shift needs no rollback here: the equal-shift arm
+		 * never changes it, and mlx5r_umr_dmabuf_update_pgsz()
+		 * restores it on its own failure paths.
+		 */
+		mr->umem = &old_umem_dmabuf->umem;
+		new_umem_dmabuf->private = NULL;
+		goto err_unmap_new;
+	}
+
+	dma_resv_unlock(new_umem_dmabuf->attach->dmabuf->resv);
+
+	/* Committed. Drop the old backing; nothing references it now. */
+	dma_resv_lock(old_umem_dmabuf->attach->dmabuf->resv, NULL);
+	old_umem_dmabuf->private = NULL;
+	ib_umem_dmabuf_unmap_pages(old_umem_dmabuf);
+	dma_resv_unlock(old_umem_dmabuf->attach->dmabuf->resv);
+
+	ib_umem_release(&old_umem_dmabuf->umem);
+
+	/*
+	 * TODO: HACK -- reaching into uverbs core's private ib_umr_object.
+	 *
+	 * uverbs core keeps its own dma_buf reference for a DMA-BUF MR so that
+	 * UVERBS_METHOD_MR_EXPORT_DMABUF_FD can hand it back; having rebound
+	 * the MR we must update it, or a later export returns the buffer the
+	 * MR *used* to be backed by. There is no exported interface for that,
+	 * because upstream has no notion of an MR whose dma_buf changes.
+	 *
+	 * This goes away the moment rebind is promoted to a core verb: the
+	 * core handler owns ib_umr_object directly and would just assign it,
+	 * with no cross-layer poke and no export. The verb lives here only to
+	 * avoid adding an ib_device_ops member, which would change struct
+	 * ib_device's layout and so every MODVERSIONS CRC that reaches it --
+	 * forcing a rebuild of every RDMA module on the system rather than
+	 * just this one. That trade is worth revisiting at any kernel rebase,
+	 * where everything gets rebuilt anyway.
+	 *
+	 * Safe today only because: (a) mlx5_ib and ib_uverbs are built from
+	 * one tree, so ib_umr_object cannot drift underneath us, and (b) the
+	 * calling uverbs method declares the MR handle UVERBS_ACCESS_WRITE,
+	 * which holds the uobject exclusively and so excludes a concurrent
+	 * MR_EXPORT_DMABUF_FD (shared access) or destroy.
+	 *
+	 * Note we publish the dma_buf the attachment actually resolved to,
+	 * not a re-resolution of @fd -- the fd number could have been closed
+	 * and reused since, and core must end up holding the buffer this MR
+	 * is genuinely bound to.
+	 */
+	if (ibmr->uobject) {
+		struct ib_umr_object *umr_uobj =
+			to_ib_umr_object(ibmr->uobject);
+
+		if (umr_uobj->dmabuf) {
+			struct dma_buf *bound =
+				new_umem_dmabuf->attach->dmabuf;
+
+			get_dma_buf(bound);
+			dma_buf_put(umr_uobj->dmabuf);
+			umr_uobj->dmabuf = bound;
+		}
+	}
+
+	mlx5_ib_dbg(dev, "rebound mkey 0x%x to fd %d\n", mr->mmkey.key, fd);
+	return 0;
+
+err_unmap_new:
+	ib_umem_dmabuf_unmap_pages(new_umem_dmabuf);
+	dma_resv_unlock(new_umem_dmabuf->attach->dmabuf->resv);
+err_release_new:
+	ib_umem_release(&new_umem_dmabuf->umem);
+	return err;
 }
 
 struct ib_mr *mlx5_ib_reg_user_mr_dmabuf(struct ib_pd *pd, u64 offset,
