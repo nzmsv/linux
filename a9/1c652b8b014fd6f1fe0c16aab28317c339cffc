@@ -1,0 +1,54 @@
+drivers/infiniband/core/uverbs.h
+  s_d8b135fd1e0c89::t_c0e645c66b225e 188-199
+drivers/infiniband/core/uverbs_std_types_mr.c
+  s_d8b135fd1e0c89::t_20d5160c4dbde4 34-35,45-58,230,275-292,296-297,299,313,338,420-438,442-446,449-451,477-478,492,506-535,536-560,701-710,720,726-727
+  s_fd0be53cef2a4b::t_1a7ca49b2c16fe 493-505
+include/uapi/rdma/ib_user_ioctl_cmds.h
+  s_d8b135fd1e0c89::t_91ab27150bc67d 571,636-647
+drivers/infiniband/hw/mlx5/main.c
+  s_fd0be53cef2a4b::t_27d0ff2d69ae94 68
+  s_fd0be53cef2a4b::t_ea8e4f2338cbde 62-67
+drivers/infiniband/hw/mlx5/std_types.c
+  s_fd0be53cef2a4b::t_e3662fdc49e1b0 270-279
+  s_fd0be53cef2a4b::t_36f1ab2651d514 269,280-282,286-298,300-313
+  s_fd0be53cef2a4b::t_d43d17e6934bf4 283-285
+  s_fd0be53cef2a4b::t_44e93f1c064fee 321-323
+  s_fd0be53cef2a4b::t_b975d14699b1cc 299
+drivers/infiniband/hw/mlx5/mr.c
+  s_fd0be53cef2a4b::t_421bbc7adef2ae 45-48
+  s_fd0be53cef2a4b::t_427385cb104a0d 1819-1827,1830-1842,1845-1908,1912-1917,1921-1925,1932,1940,1942-1956,2000-2008
+  s_fd0be53cef2a4b::t_f518cd582f75a2 1957-1999
+  s_fd0be53cef2a4b::t_10b7bb007e1b9f 1909-1911,1918-1920,1926-1931,1933-1939,1941
+  s_fd0be53cef2a4b::t_7955e84599e27a 1828-1829
+  s_fd0be53cef2a4b::t_c1280b4cfd6f4c 1843-1844
+  s_fd0be53cef2a4b::t_3882a9819b8df2 1818,2009
+drivers/infiniband/hw/mlx5/mlx5_ib.h
+  s_fd0be53cef2a4b::t_2e6dc87f6cef25 1477
+include/uapi/rdma/mlx5_user_ioctl_cmds.h
+  s_fd0be53cef2a4b::t_bc72ceaff2bc9a 372
+  s_fd0be53cef2a4b::t_77f76e8e907359 356-371,373-387
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a91c652b8b014fd6f1fe0c16aab28317c339cffc",
+  "prompts": {},
+  "sessions": {
+    "s_d8b135fd1e0c89": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ab5b93dd-1960-47b5-bbdf-e8dbb6915614",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    },
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
