@@ -1,0 +1,23 @@
+drivers/net/ethernet/mellanox/mlx5/core/vfmig/vfmig.c
+  s_fd0be53cef2a4b::t_3be875f7c0a8f0 3353-3365,3368,3371-3375
+drivers/infiniband/hw/mlx5/mr.c
+  s_fd0be53cef2a4b::t_8d830e5af91285 1074
+  s_fd0be53cef2a4b::t_a5fe1e12c17017 917-975
+  s_fd0be53cef2a4b::t_a647b1079471b7 916
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "2ea11a6c3b68cdec4967efdfa777e966d4eeaaa6",
+  "prompts": {},
+  "sessions": {
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
