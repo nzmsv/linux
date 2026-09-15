@@ -1,0 +1,21 @@
+include/rdma/ib_umem.h
+  s_fd0be53cef2a4b::t_439a71e342a936 187
+drivers/infiniband/core/umem_dmabuf.c
+  s_fd0be53cef2a4b::t_439a71e342a936 371-377,380-381,383,389-390,392,398-401,403,410-421,423-428,434-451
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "12235187e09763b3bd98ffb32f33c6d261c01a62",
+  "prompts": {},
+  "sessions": {
+    "s_fd0be53cef2a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1764101b-1723-448d-86c1-b425326dd77b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
