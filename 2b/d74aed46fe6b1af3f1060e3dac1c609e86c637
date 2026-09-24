@@ -1,0 +1,21 @@
+include/uapi/rdma/mlx5_user_ioctl_cmds.h
+  s_e12a9475f8180e::t_4f585faba640cd 604,637-649
+drivers/infiniband/hw/mlx5/vfmig_uctx.c
+  s_e12a9475f8180e::t_4f585faba640cd 22,816-821,896-925,942-945
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "2bd74aed46fe6b1af3f1060e3dac1c609e86c637",
+  "prompts": {},
+  "sessions": {
+    "s_e12a9475f8180e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8cf6bcd6-af1f-456e-b7c4-823de7feb789",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
