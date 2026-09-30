@@ -1,0 +1,34 @@
+drivers/infiniband/core/uverbs_std_types_mr.c
+  s_d8b135fd1e0c89::t_890aaa02979b7f 493-524,529-530,533-536
+  s_d8b135fd1e0c89::t_1fee539644853b 275-279,288-292,296-297,299,313
+  s_d8b135fd1e0c89::t_75fdb51f2e9f95 427-433
+  s_d8b135fd1e0c89::t_29b59b618b5d7c 230
+  s_d8b135fd1e0c89::t_e8ea7c46798b9b 280-287
+  s_d8b135fd1e0c89::t_cd162296fbf7a4 34-35,45-58,559
+  s_d8b135fd1e0c89::t_e7842edf40a0c9 338
+  s_d8b135fd1e0c89::t_aa194d20dabfdf 701-708
+  s_d8b135fd1e0c89::t_adbe4948876def 420-426,434-438,442-446,449-451
+  s_d8b135fd1e0c89::t_de5c8492dfd88f 477-478
+  s_d8b135fd1e0c89::t_4cdf55e94a0ab6 492,525-528,531-532,537-558
+drivers/infiniband/core/uverbs.h
+  s_d8b135fd1e0c89::t_4b504d1a7826e2 188-199
+include/uapi/rdma/ib_user_ioctl_cmds.h
+  s_d8b135fd1e0c89::t_9ec1953b2ca2bc 636-647
+  s_d8b135fd1e0c89::t_244c5b9a4a6b3b 571
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "b18f1c6cfd7a47fbc537a7ecb1dd76ba0185ba8f",
+  "prompts": {},
+  "sessions": {
+    "s_d8b135fd1e0c89": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ab5b93dd-1960-47b5-bbdf-e8dbb6915614",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
