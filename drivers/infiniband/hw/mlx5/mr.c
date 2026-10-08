@@ -938,6 +938,141 @@ static int mlx5_ib_mkey_is_free(struct mlx5_ib_dev *dev, u32 mkey)
 }
 
 /*
+ * Unbind for a data-direct MR acts on the crossed mkey only.
+ *
+ * The MR the caller holds is the crossing mkey on this device; it names the
+ * crossed KSM mkey on the data-direct device by key and carries no
+ * translations of its own. Disabling the crossed mkey is enough to make
+ * every access through the crossing one fail, and leaving the crossing mkey
+ * alone is what keeps the caller's lkey and rkey.
+ *
+ * Revoke before detaching, as mlx5_ib_revoke_data_direct_mr() does: the KSM
+ * update path has no zap ("No invalidation flow is expected"), so disabling
+ * the mkey is how it stops naming the buffer before the mapping goes away.
+ */
+static int unbind_data_direct_mr(struct mlx5_ib_dev *dev,
+				 struct mlx5_ib_mr *mr)
+{
+	struct mlx5_ib_mr *crossed;
+	int err;
+
+	/*
+	 * Only the crossing mkey is a caller's MR, and it has no umem. A
+	 * data-direct MR with a umem is a crossed KSM mkey, which nothing
+	 * should hand us.
+	 */
+	if (mr->umem)
+		return -EOPNOTSUPP;
+	crossed = mr->dd_crossed_mr;
+
+	mutex_lock(&dev->data_direct_lock);
+	/* Revoked with the data-direct device: already disabled and unmapped. */
+	if (!crossed->revoked) {
+		err = mlx5r_umr_revoke_mr(crossed);
+		if (err) {
+			mlx5_ib_warn(dev, "unbind: revoke crossed mkey 0x%x failed: %d\n",
+				     crossed->mmkey.key, err);
+			goto out;
+		}
+	}
+	ib_umem_dmabuf_detach(to_ib_umem_dmabuf(crossed->umem));
+	mlx5_ib_dbg(dev, "unbound data-direct mkey 0x%x (crossed 0x%x)\n",
+		    mr->mmkey.key, crossed->mmkey.key);
+	err = 0;
+out:
+	mutex_unlock(&dev->data_direct_lock);
+	return err;
+}
+
+/*
+ * Bind for a data-direct MR: attach the new buffer to the data-direct device,
+ * as registration does, and bring the crossed mkey back with one
+ * XLT_ENABLE update -- the same route mlx5_ib_bind_dmabuf_mr() takes for an
+ * MTT mkey, with KSM entries against the data-direct PD instead.
+ */
+static int bind_data_direct_mr(struct mlx5_ib_dev *dev, struct mlx5_ib_mr *mr,
+			       int fd)
+{
+	struct ib_umem_dmabuf *old_umem_dmabuf, *new_umem_dmabuf;
+	struct mlx5_ib_mr *crossed;
+	unsigned int old_page_shift;
+	unsigned long page_size;
+	int mkey_free;
+	int err;
+
+	/* As in unbind_data_direct_mr(): only the crossing mkey is valid here. */
+	if (mr->umem)
+		return -EOPNOTSUPP;
+	crossed = mr->dd_crossed_mr;
+	old_umem_dmabuf = to_ib_umem_dmabuf(crossed->umem);
+	old_page_shift = crossed->page_shift;
+
+	mutex_lock(&dev->data_direct_lock);
+	if (!dev->data_direct_dev || crossed->revoked) {
+		err = -ENODEV;
+		goto out;
+	}
+
+	new_umem_dmabuf = ib_umem_dmabuf_get_pinned_with_dma_device(
+		&dev->ib_dev, &dev->data_direct_dev->pdev->dev,
+		old_umem_dmabuf->umem.address, old_umem_dmabuf->umem.length,
+		fd, crossed->access_flags);
+	if (IS_ERR(new_umem_dmabuf)) {
+		err = PTR_ERR(new_umem_dmabuf);
+		goto out;
+	}
+	if (new_umem_dmabuf->umem.length != old_umem_dmabuf->umem.length) {
+		err = -EINVAL;
+		goto err_release_new;
+	}
+	new_umem_dmabuf->umem.iova = old_umem_dmabuf->umem.iova;
+
+	page_size = mlx5_umem_dmabuf_find_best_pgsz(new_umem_dmabuf,
+						    MLX5_MKC_ACCESS_MODE_KSM);
+	if (!page_size) {
+		err = -EINVAL;
+		goto err_release_new;
+	}
+
+	mkey_free = mlx5_ib_mkey_is_free(dev, crossed->mmkey.key);
+	if (mkey_free <= 0) {
+		if (!mkey_free)
+			mlx5_ib_warn(dev, "bind: crossed mkey 0x%x is not free; unbind it first\n",
+				     crossed->mmkey.key);
+		err = mkey_free ?: -EINVAL;
+		goto err_release_new;
+	}
+
+	/* The KSM update walks crossed->umem, so publish first. */
+	crossed->umem = &new_umem_dmabuf->umem;
+	new_umem_dmabuf->private = crossed;
+	crossed->page_shift = order_base_2(page_size);
+
+	dma_resv_lock(new_umem_dmabuf->attach->dmabuf->resv, NULL);
+	err = mlx5r_umr_update_data_direct_ksm_pas(crossed,
+						   MLX5_IB_UPD_XLT_ENABLE);
+	dma_resv_unlock(new_umem_dmabuf->attach->dmabuf->resv);
+	if (err) {
+		crossed->umem = &old_umem_dmabuf->umem;
+		crossed->page_shift = old_page_shift;
+		goto err_release_new;
+	}
+
+	old_umem_dmabuf->private = NULL;
+	ib_umem_release(&old_umem_dmabuf->umem);
+	mlx5_ib_dbg(dev, "bound data-direct mkey 0x%x (crossed 0x%x) to fd %d, page_shift=%u\n",
+		    mr->mmkey.key, crossed->mmkey.key, fd, crossed->page_shift);
+	mutex_unlock(&dev->data_direct_lock);
+	return 0;
+
+err_release_new:
+	ib_umem_release(&new_umem_dmabuf->umem);
+out:
+	mutex_unlock(&dev->data_direct_lock);
+	return err;
+}
+
+/*
  * Detach a DMA-BUF MR from its backing, keeping the mkey.
  *
  * Zap the translations, tear down the exporter's mapping, and mark the
@@ -977,15 +1112,10 @@ int mlx5_ib_unbind_dmabuf_mr(struct ib_mr *ibmr)
 	struct ib_umem_dmabuf *umem_dmabuf;
 	int err;
 
-	if (!is_dmabuf_mr(mr))
-		return -EOPNOTSUPP;
-
-	/*
-	 * data-direct MRs carry a second mkey on the data-direct device;
-	 * clearing only this one would leave the pair inconsistent. Refused
-	 * for the same reason rebind refuses them.
-	 */
 	if (mr->data_direct)
+		return unbind_data_direct_mr(dev, mr);
+
+	if (!is_dmabuf_mr(mr))
 		return -EOPNOTSUPP;
 
 	umem_dmabuf = to_ib_umem_dmabuf(mr->umem);
@@ -1110,7 +1240,7 @@ int mlx5_ib_bind_dmabuf_mr(struct ib_mr *ibmr, int fd)
 	int err;
 
 	if (mr->data_direct)
-		return -EOPNOTSUPP;
+		return bind_data_direct_mr(dev, mr, fd);
 
 	/*
 	 * The UMR QP, its CQ and umrc.sem are allocated lazily by the first
