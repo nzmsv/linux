@@ -785,6 +785,47 @@ DECLARE_UVERBS_NAMED_METHOD(
 			UA_MANDATORY),
 	UVERBS_ATTR_RAW_FD(UVERBS_ATTR_MR_BIND_DMABUF_FD, UA_MANDATORY));
 
+/*
+ * The VA counterpart of MR_BIND_DMABUF, with the same "unbound" bookkeeping.
+ * The pages are pinned in the calling process, the one whose memory ADDR
+ * names.
+ */
+static int UVERBS_HANDLER(UVERBS_METHOD_MR_BIND_VA)(
+	struct uverbs_attr_bundle *attrs)
+{
+	struct ib_mr *mr =
+		uverbs_attr_get_obj(attrs, UVERBS_ATTR_MR_BIND_VA_HANDLE);
+	u64 addr;
+	int ret;
+
+	if (!mr->device->ops.bind_va_mr)
+		return -EOPNOTSUPP;
+
+	if (!mr->unbound)
+		return -EINVAL;
+
+	ret = uverbs_copy_from(&addr, attrs, UVERBS_ATTR_MR_BIND_VA_ADDR);
+	if (ret)
+		return ret;
+
+	ret = mr->device->ops.bind_va_mr(mr, addr);
+	if (ret)
+		return ret;
+
+	mr->unbound = 0;
+	return 0;
+}
+
+DECLARE_UVERBS_NAMED_METHOD(
+	UVERBS_METHOD_MR_BIND_VA,
+	UVERBS_ATTR_IDR(UVERBS_ATTR_MR_BIND_VA_HANDLE,
+			UVERBS_OBJECT_MR,
+			UVERBS_ACCESS_WRITE,
+			UA_MANDATORY),
+	UVERBS_ATTR_PTR_IN(UVERBS_ATTR_MR_BIND_VA_ADDR,
+			   UVERBS_ATTR_TYPE(u64),
+			   UA_MANDATORY));
+
 DECLARE_UVERBS_NAMED_METHOD_DESTROY(
 	UVERBS_METHOD_MR_DESTROY,
 	UVERBS_ATTR_IDR(UVERBS_ATTR_DESTROY_MR_HANDLE,
@@ -803,7 +844,8 @@ DECLARE_UVERBS_NAMED_OBJECT(
 	&UVERBS_METHOD(UVERBS_METHOD_REG_MR),
 	&UVERBS_METHOD(UVERBS_METHOD_MR_EXPORT_DMABUF_FD),
 	&UVERBS_METHOD(UVERBS_METHOD_MR_UNBIND),
-	&UVERBS_METHOD(UVERBS_METHOD_MR_BIND_DMABUF));
+	&UVERBS_METHOD(UVERBS_METHOD_MR_BIND_DMABUF),
+	&UVERBS_METHOD(UVERBS_METHOD_MR_BIND_VA));
 
 const struct uapi_definition uverbs_def_obj_mr[] = {
 	UAPI_DEF_CHAIN_OBJ_TREE_NAMED(UVERBS_OBJECT_MR,

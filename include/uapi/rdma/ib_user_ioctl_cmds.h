@@ -629,6 +629,7 @@ enum uverbs_methods_mr {
 	UVERBS_METHOD_MR_EXPORT_DMABUF_FD,
 	UVERBS_METHOD_MR_UNBIND,
 	UVERBS_METHOD_MR_BIND_DMABUF,
+	UVERBS_METHOD_MR_BIND_VA,
 };
 
 enum uverbs_attrs_mr_destroy_ids {
@@ -742,6 +743,25 @@ enum uverbs_attrs_mr_unbind_dmabuf_ids {
 enum uverbs_attrs_mr_bind_dmabuf_ids {
 	UVERBS_ATTR_MR_BIND_DMABUF_HANDLE,
 	UVERBS_ATTR_MR_BIND_DMABUF_FD,
+};
+
+/*
+ * UVERBS_METHOD_MR_BIND_VA attributes.
+ *
+ * Point an unbound MR at the caller's memory at ADDR, keeping the MR's
+ * lkey, rkey, length and iova. The memory is pinned afresh in the calling
+ * process, so it may be different pages from the ones the MR was registered
+ * on -- the same range after a checkpoint/restore, say. ADDR must keep
+ * (ADDR & ~PAGE_MASK) == (iova & ~PAGE_MASK), and the range must cover the
+ * MR's length.
+ *
+ * Valid only on an unbound MR that has no backing left, which is what
+ * UVERBS_METHOD_MR_UNBIND leaves of an MR on pinned user memory; anything
+ * else returns -EINVAL.
+ */
+enum uverbs_attrs_mr_bind_va_ids {
+	UVERBS_ATTR_MR_BIND_VA_HANDLE,
+	UVERBS_ATTR_MR_BIND_VA_ADDR,
 };
 
 enum uverbs_attrs_create_counters_cmd_attr_ids {

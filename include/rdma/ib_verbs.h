@@ -2884,6 +2884,8 @@ struct ib_device_ops {
 	 */
 	int (*unbind_mr)(struct ib_mr *mr);
 	int (*bind_dmabuf_mr)(struct ib_mr *mr, int fd);
+	/* Like bind_dmabuf_mr, re-pinning the caller's memory at @addr. */
+	int (*bind_va_mr)(struct ib_mr *mr, u64 addr);
 	struct ib_mr *(*rereg_user_mr)(struct ib_mr *mr, int flags, u64 start,
 				       u64 length, u64 virt_addr,
 				       int mr_access_flags, struct ib_pd *pd,

@@ -734,6 +734,39 @@ struct ib_mr *mlx5_ib_reg_dm_mr(struct ib_pd *pd, struct ib_dm *dm,
 				 attr->access_flags, mode);
 }
 
+static void vfmig_retag_user_mr(struct mlx5_ib_dev *dev, struct mlx5_ib_mr *mr)
+{
+	/*
+	 * Source-side vfmig retag: promote the auto-numbered (KIND_NONE)
+	 * registry entries that vfmig_dma_ops.map_sg planted during
+	 * ib_umem_get's dma_map_sgtable into VFMIG_HUOBJ_KEY(MR,
+	 * mkey_index)-keyed entries, so SAVE_VHCA_STATE emits a
+	 * HOST_USER_PAGE record per entry and LOAD re-installs them as
+	 * awaiting_bind placeholders. Runs once the FW mkey is fully wired
+	 * (after the UMR enable, or populated by reg_create's slow path),
+	 * at registration and again when MR_BIND_VA re-pins. Since the shim page-aligns its inputs and the bump
+	 * cursor allocates contiguously, the umem's footprint collapses to
+	 * one (base, length) range. A non-zero return is non-fatal: the MR
+	 * stays usable for data path, just not CRIU-restorable.
+	 */
+	if (dev->mdev->cmd.vfmig_iova_dom && !mr->umem->is_dmabuf) {
+		struct sg_table *sgt = &mr->umem->sgt_append.sgt;
+		dma_addr_t iova_base = sg_dma_address(sgt->sgl) & PAGE_MASK;
+		size_t retag_length = ALIGN(ib_umem_offset(mr->umem) + mr->umem->length,
+					    PAGE_SIZE);
+		u32 mkey_index = mr->mmkey.key >> 8;
+		int retag_err;
+
+		retag_err = mlx5_vfmig_retag_user_mr(dev->mdev, mkey_index,
+						     iova_base, retag_length);
+		if (retag_err)
+			mlx5_ib_warn(dev,
+				     "vfmig: source-side retag for MR failed: mkey_index=0x%x iova_base=0x%llx length=0x%zx err=%d -- MR usable but not CRIU-restorable\n",
+				     mkey_index, (u64)iova_base, retag_length,
+				     retag_err);
+	}
+}
+
 static struct ib_mr *create_real_mr(struct ib_pd *pd, struct ib_umem *umem,
 				    u64 iova, int access_flags,
 				    struct ib_dmah *dmah)
@@ -791,35 +824,7 @@ static struct ib_mr *create_real_mr(struct ib_pd *pd, struct ib_umem *umem,
 		}
 	}
 
-	/*
-	 * Source-side vfmig retag: promote the auto-numbered (KIND_NONE)
-	 * registry entries that vfmig_dma_ops.map_sg planted during
-	 * ib_umem_get's dma_map_sgtable into VFMIG_HUOBJ_KEY(MR,
-	 * mkey_index)-keyed entries, so SAVE_VHCA_STATE emits a
-	 * HOST_USER_PAGE record per entry and LOAD re-installs them as
-	 * awaiting_bind placeholders. Runs after the FW mkey is fully wired
-	 * (post-UMR enable above, or already populated on the reg_create
-	 * slow path). Since the shim page-aligns its inputs and the bump
-	 * cursor allocates contiguously, the umem's footprint collapses to
-	 * one (base, length) range. A non-zero return is non-fatal: the MR
-	 * stays usable for data path, just not CRIU-restorable.
-	 */
-	if (dev->mdev->cmd.vfmig_iova_dom && !umem->is_dmabuf) {
-		struct sg_table *sgt = &umem->sgt_append.sgt;
-		dma_addr_t iova_base = sg_dma_address(sgt->sgl) & PAGE_MASK;
-		size_t retag_length = ALIGN(ib_umem_offset(umem) + umem->length,
-					    PAGE_SIZE);
-		u32 mkey_index = mr->mmkey.key >> 8;
-		int retag_err;
-
-		retag_err = mlx5_vfmig_retag_user_mr(dev->mdev, mkey_index,
-						     iova_base, retag_length);
-		if (retag_err)
-			mlx5_ib_warn(dev,
-				     "vfmig: source-side retag for MR failed: mkey_index=0x%x iova_base=0x%llx length=0x%zx err=%d -- MR usable but not CRIU-restorable\n",
-				     mkey_index, (u64)iova_base, retag_length,
-				     retag_err);
-	}
+	vfmig_retag_user_mr(dev, mr);
 	return &mr->ibmr;
 }
 
@@ -1105,6 +1110,48 @@ out:
  *
  * Idempotent: unbinding an already-unbound MR succeeds and does nothing.
  */
+/*
+ * Unbind for an MR on pinned user memory: disable the mkey, then unpin.
+ *
+ * Unlike a dma-buf umem, a VA umem has nothing worth keeping once its pages
+ * are unpinned, so it is released outright and the MR becomes the umem-less
+ * shell RESTORE_MR produces; MR_BIND_VA pins new pages behind it. Its
+ * geometry survives in ibmr.iova and ibmr.length, and its access flags in
+ * ibmr.access_flags.
+ *
+ * Only MRs whose translations UMR can load: the bind has to bring the mkey
+ * back with an XLT_ENABLE, and unbinding an MR that could never be rebound
+ * would strand it.
+ */
+static int unbind_va_mr(struct mlx5_ib_dev *dev, struct mlx5_ib_mr *mr)
+{
+	struct ib_umem *umem = mr->umem;
+	int err;
+
+	if (is_odp_mr(mr) || !mlx5r_umr_can_load_pas(dev, mr->ibmr.length))
+		return -EOPNOTSUPP;
+
+	err = mlx5r_umr_revoke_mr(mr);
+	if (err) {
+		mlx5_ib_warn(dev, "unbind: revoke mkey 0x%x failed: %d\n",
+			     mr->mmkey.key, err);
+		return err;
+	}
+
+	atomic_sub(ib_umem_num_pages(umem), &dev->mdev->priv.reg_pages);
+	/*
+	 * With umem NULL the union is the kernel-MR arm, where a stale
+	 * access_flags or page_shift reads as a descs pointer.
+	 */
+	mr->umem = NULL;
+	mr->access_flags = 0;
+	mr->page_shift = 0;
+	ib_umem_release(umem);
+
+	mlx5_ib_dbg(dev, "unbound VA mkey 0x%x\n", mr->mmkey.key);
+	return 0;
+}
+
 int mlx5_ib_unbind_mr(struct ib_mr *ibmr)
 {
 	struct mlx5_ib_mr *mr = to_mmr(ibmr);
@@ -1114,6 +1161,9 @@ int mlx5_ib_unbind_mr(struct ib_mr *ibmr)
 
 	if (mr->data_direct)
 		return unbind_data_direct_mr(dev, mr);
+
+	if (mr->umem && !mr->umem->is_dmabuf)
+		return unbind_va_mr(dev, mr);
 
 	if (!is_dmabuf_mr(mr))
 		return -EOPNOTSUPP;
@@ -1406,6 +1456,85 @@ err_unpublish:
 	}
 err_release_new:
 	ib_umem_release(&new_umem_dmabuf->umem);
+	return err;
+}
+
+/*
+ * Point an unbound MR at freshly pinned user memory, keeping the mkey.
+ *
+ * The VA counterpart of mlx5_ib_bind_dmabuf_mr(): pin the caller's range at
+ * @addr, then bring the disabled mkey live with the single XLT_ENABLE update
+ * create_real_mr() uses. The pages need not be the ones the MR was
+ * registered on, and their DMA addresses need not match the old ones --
+ * the translations are written anew -- so lkey, rkey and iova survive a
+ * change of backing.
+ *
+ * Takes only a backing-less shell: a dma-buf MR keeps its detached umem
+ * and goes through MR_BIND_DMABUF instead.
+ */
+int mlx5_ib_bind_va_mr(struct ib_mr *ibmr, u64 addr)
+{
+	struct mlx5_ib_mr *mr = to_mmr(ibmr);
+	struct mlx5_ib_dev *dev = to_mdev(ibmr->device);
+	unsigned long page_size;
+	struct ib_umem *umem;
+	int mkey_free;
+	int err;
+
+	if (mr->umem || mr->data_direct)
+		return -EINVAL;
+	if ((addr ^ ibmr->iova) & ~PAGE_MASK)
+		return -EINVAL;
+	if (!mlx5r_umr_can_load_pas(dev, ibmr->length))
+		return -EOPNOTSUPP;
+
+	err = mlx5r_umr_resource_init(dev);
+	if (err)
+		return err;
+
+	umem = ib_umem_get_va(&dev->ib_dev, addr, ibmr->length,
+			      ibmr->access_flags);
+	if (IS_ERR(umem))
+		return PTR_ERR(umem);
+
+	page_size = mlx5_umem_mkc_find_best_pgsz(dev, umem, ibmr->iova,
+						 MLX5_MKC_ACCESS_MODE_MTT);
+	if (!page_size) {
+		err = -EINVAL;
+		goto err_release;
+	}
+
+	mkey_free = mlx5_ib_mkey_is_free(dev, mr->mmkey.key);
+	if (mkey_free <= 0) {
+		if (!mkey_free)
+			mlx5_ib_warn(dev, "bind: mkey 0x%x is not free; unbind it first\n",
+				     mr->mmkey.key);
+		err = mkey_free ?: -EINVAL;
+		goto err_release;
+	}
+
+	/* The update walks mr->umem, and needs the user-MR arm back. */
+	mr->umem = umem;
+	mr->access_flags = ibmr->access_flags;
+	mr->page_shift = order_base_2(page_size);
+	err = mlx5r_umr_update_mr_pas(mr, MLX5_IB_UPD_XLT_ENABLE,
+				      to_mpd(ibmr->pd)->pdn);
+	if (err) {
+		mr->umem = NULL;
+		mr->access_flags = 0;
+		mr->page_shift = 0;
+		goto err_release;
+	}
+
+	atomic_add(ib_umem_num_pages(umem), &dev->mdev->priv.reg_pages);
+	vfmig_retag_user_mr(dev, mr);
+
+	mlx5_ib_dbg(dev, "bound mkey 0x%x to VA 0x%llx, page_shift=%u\n",
+		    mr->mmkey.key, addr, mr->page_shift);
+	return 0;
+
+err_release:
+	ib_umem_release(umem);
 	return err;
 }
 

@@ -5545,6 +5545,7 @@ static const struct ib_device_ops mlx5_ib_dev_ops = {
 	.alloc_ucontext = mlx5_ib_alloc_ucontext,
 	.attach_mcast = mlx5_ib_mcg_attach,
 	.bind_dmabuf_mr = mlx5_ib_bind_dmabuf_mr,
+	.bind_va_mr = mlx5_ib_bind_va_mr,
 	.check_mr_status = mlx5_ib_check_mr_status,
 	.create_ah = mlx5_ib_create_ah,
 	.create_cq = mlx5_ib_create_cq,
