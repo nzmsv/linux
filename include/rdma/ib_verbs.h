@@ -2030,12 +2030,12 @@ struct ib_mr {
 	bool		   need_inval;
 	/*
 	 * Set while the MR holds its key but has no backing: either
-	 * UVERBS_METHOD_MR_UNBIND_DMABUF revoked it, or RESTORE_MR adopted
+	 * UVERBS_METHOD_MR_UNBIND revoked it, or RESTORE_MR adopted
 	 * the key with nothing behind it. UVERBS_METHOD_MR_BIND_DMABUF is
 	 * the only way out. Written by the core handlers for those verbs
 	 * and by the driver's restore_mr; drivers may read it.
 	 */
-	u8		   dmabuf_unbound : 1;
+	u8		   unbound : 1;
 	union {
 		struct ib_uobject	*uobject;	/* user */
 		struct list_head	qp_entry;	/* FR */
@@ -2878,11 +2878,11 @@ struct ib_device_ops {
 	/*
 	 * Detach a DMA-BUF-backed MR from its backing, and re-point an
 	 * unbound one at a new dma_buf, both without destroying the key.
-	 * See UVERBS_METHOD_MR_UNBIND_DMABUF / _BIND_DMABUF. Optional; a
+	 * See UVERBS_METHOD_MR_UNBIND / _BIND_DMABUF. Optional; a
 	 * driver implementing either must implement both, since an MR
 	 * unbound by the first can only be made usable by the second.
 	 */
-	int (*unbind_dmabuf_mr)(struct ib_mr *mr);
+	int (*unbind_mr)(struct ib_mr *mr);
 	int (*bind_dmabuf_mr)(struct ib_mr *mr, int fd);
 	struct ib_mr *(*rereg_user_mr)(struct ib_mr *mr, int flags, u64 start,
 				       u64 length, u64 virt_addr,

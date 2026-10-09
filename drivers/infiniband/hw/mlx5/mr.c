@@ -1105,7 +1105,7 @@ out:
  *
  * Idempotent: unbinding an already-unbound MR succeeds and does nothing.
  */
-int mlx5_ib_unbind_dmabuf_mr(struct ib_mr *ibmr)
+int mlx5_ib_unbind_mr(struct ib_mr *ibmr)
 {
 	struct mlx5_ib_mr *mr = to_mmr(ibmr);
 	struct mlx5_ib_dev *dev = to_mdev(ibmr->device);
@@ -1199,7 +1199,7 @@ static const struct dma_buf_attach_ops mlx5_ib_dmabuf_attach_ops = {
 /*
  * Point an unbound DMA-BUF MR at a new dma_buf, keeping the mkey.
  *
- * The restore half of the pair UVERBS_METHOD_MR_UNBIND_DMABUF opens. It
+ * The restore half of the pair UVERBS_METHOD_MR_UNBIND opens. It
  * accepts an MR in either shape the unbound state comes in:
  *
  *   - unbind detached the umem in place (mr->umem is a revoked, exporter-less
@@ -1211,7 +1211,7 @@ static const struct dma_buf_attach_ops mlx5_ib_dmabuf_attach_ops = {
  * the image. The offset keeps uverbs' (offset & ~PAGE_MASK) == (iova &
  * ~PAGE_MASK) invariant against the iova the mkey still holds.
  *
- * The mkey must be disabled, which is what UVERBS_METHOD_MR_UNBIND_DMABUF
+ * The mkey must be disabled, which is what UVERBS_METHOD_MR_UNBIND
  * leaves behind on both paths in. That is checked rather than assumed: the
  * state came from a checkpoint image, so nothing here may take on faith
  * that the dump unbound.
@@ -1334,7 +1334,7 @@ int mlx5_ib_bind_dmabuf_mr(struct ib_mr *ibmr, int fd)
 	if (!mkey_free) {
 		/*
 		 * Every path into this verb goes through
-		 * UVERBS_METHOD_MR_UNBIND_DMABUF,
+		 * UVERBS_METHOD_MR_UNBIND,
 		 * which revokes, so the mkey should be disabled here. A live
 		 * one means it was not unbound -- an MR checkpointed by
 		 * something that did not, say. Refuse rather than attempt

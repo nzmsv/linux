@@ -627,7 +627,7 @@ enum uverbs_methods_mr {
 	UVERBS_METHOD_REG_DMABUF_MR,
 	UVERBS_METHOD_REG_MR,
 	UVERBS_METHOD_MR_EXPORT_DMABUF_FD,
-	UVERBS_METHOD_MR_UNBIND_DMABUF,
+	UVERBS_METHOD_MR_UNBIND,
 	UVERBS_METHOD_MR_BIND_DMABUF,
 };
 
@@ -706,7 +706,7 @@ enum uverbs_attrs_mr_export_dmabuf_fd_ids {
 };
 
 /*
- * UVERBS_METHOD_MR_UNBIND_DMABUF attributes.
+ * UVERBS_METHOD_MR_UNBIND attributes.
  *
  * Detach a DMA-BUF-backed MR from its current backing without destroying
  * the mkey: the translations are zapped, the exporter's mapping is torn
@@ -724,7 +724,7 @@ enum uverbs_attrs_mr_export_dmabuf_fd_ids {
  * unbound MR succeeds and changes nothing.
  */
 enum uverbs_attrs_mr_unbind_dmabuf_ids {
-	UVERBS_ATTR_MR_UNBIND_DMABUF_HANDLE,
+	UVERBS_ATTR_MR_UNBIND_HANDLE,
 };
 
 /*
@@ -734,7 +734,7 @@ enum uverbs_attrs_mr_unbind_dmabuf_ids {
  * lkey, rkey, length and iova: the key is never destroyed, only its
  * translations are written. Peers holding (rkey, iova) stay valid.
  *
- * The restore half of the pair UVERBS_METHOD_MR_UNBIND_DMABUF opens. Valid
+ * The restore half of the pair UVERBS_METHOD_MR_UNBIND opens. Valid
  * only on an MR that verb unbound, or that RESTORE_MR adopted with no
  * backing; anything else returns -EINVAL. The new buffer must cover the
  * MR's original length.

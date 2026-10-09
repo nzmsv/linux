@@ -721,27 +721,27 @@ DECLARE_UVERBS_NAMED_METHOD(
  * exclusively and so serialises against a concurrent MR_EXPORT_DMABUF_FD
  * (shared access) and against destroy.
  */
-static int UVERBS_HANDLER(UVERBS_METHOD_MR_UNBIND_DMABUF)(
+static int UVERBS_HANDLER(UVERBS_METHOD_MR_UNBIND)(
 	struct uverbs_attr_bundle *attrs)
 {
 	struct ib_mr *mr =
-		uverbs_attr_get_obj(attrs, UVERBS_ATTR_MR_UNBIND_DMABUF_HANDLE);
+		uverbs_attr_get_obj(attrs, UVERBS_ATTR_MR_UNBIND_HANDLE);
 	int ret;
 
-	if (!mr->device->ops.unbind_dmabuf_mr)
+	if (!mr->device->ops.unbind_mr)
 		return -EOPNOTSUPP;
 
-	ret = mr->device->ops.unbind_dmabuf_mr(mr);
+	ret = mr->device->ops.unbind_mr(mr);
 	if (ret)
 		return ret;
 
-	mr->dmabuf_unbound = 1;
+	mr->unbound = 1;
 	return 0;
 }
 
 DECLARE_UVERBS_NAMED_METHOD(
-	UVERBS_METHOD_MR_UNBIND_DMABUF,
-	UVERBS_ATTR_IDR(UVERBS_ATTR_MR_UNBIND_DMABUF_HANDLE,
+	UVERBS_METHOD_MR_UNBIND,
+	UVERBS_ATTR_IDR(UVERBS_ATTR_MR_UNBIND_HANDLE,
 			UVERBS_OBJECT_MR,
 			UVERBS_ACCESS_WRITE,
 			UA_MANDATORY));
@@ -762,7 +762,7 @@ static int UVERBS_HANDLER(UVERBS_METHOD_MR_BIND_DMABUF)(
 	if (!mr->device->ops.bind_dmabuf_mr)
 		return -EOPNOTSUPP;
 
-	if (!mr->dmabuf_unbound)
+	if (!mr->unbound)
 		return -EINVAL;
 
 	ret = uverbs_get_raw_fd(&fd, attrs, UVERBS_ATTR_MR_BIND_DMABUF_FD);
@@ -773,7 +773,7 @@ static int UVERBS_HANDLER(UVERBS_METHOD_MR_BIND_DMABUF)(
 	if (ret)
 		return ret;
 
-	mr->dmabuf_unbound = 0;
+	mr->unbound = 0;
 	return 0;
 }
 
@@ -802,7 +802,7 @@ DECLARE_UVERBS_NAMED_OBJECT(
 	&UVERBS_METHOD(UVERBS_METHOD_REG_DMABUF_MR),
 	&UVERBS_METHOD(UVERBS_METHOD_REG_MR),
 	&UVERBS_METHOD(UVERBS_METHOD_MR_EXPORT_DMABUF_FD),
-	&UVERBS_METHOD(UVERBS_METHOD_MR_UNBIND_DMABUF),
+	&UVERBS_METHOD(UVERBS_METHOD_MR_UNBIND),
 	&UVERBS_METHOD(UVERBS_METHOD_MR_BIND_DMABUF));
 
 const struct uapi_definition uverbs_def_obj_mr[] = {
