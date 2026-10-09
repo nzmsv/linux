@@ -1,0 +1,20 @@
+drivers/net/ethernet/mellanox/mlx5/core/cmd.c
+  s_e12a9475f8180e::t_24f8807d02e9c2 1448-1450,1456,1472
+  s_e12a9475f8180e::t_e1267f26430b94 1451-1455
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d34a99b5acac535f7a1e85bc222091f1fdfc7572",
+  "prompts": {},
+  "sessions": {
+    "s_e12a9475f8180e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8cf6bcd6-af1f-456e-b7c4-823de7feb789",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Grigori Inozemtsev <ginozemtsev@nvidia.com>"
+    }
+  }
+}
