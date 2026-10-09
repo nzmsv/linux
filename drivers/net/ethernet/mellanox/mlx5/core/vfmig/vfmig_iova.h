@@ -103,7 +103,7 @@ struct vfmig_iova_domain;
  *                          the fixed kernel slots this slot is
  *                          "expand-to-fill": it spans from the kcoherent
  *                          carve's end (VFMIG_IOVA_KCOHERENT_BYTES) up to
- *                          the transient arena's base, so raising
+ *                          the top of the per-VF window, so raising
  *                          CONFIG_MLX5_VFMIG_IOVA_PER_VF_GIB grows the
  *                          user-MR budget without shifting any kernel
  *                          slot's IOVAs. No call site routes through it
@@ -166,8 +166,8 @@ enum vfmig_iova_slot {
  *     wide. Slot N occupies [base + N*SLOT_BYTES, base + (N+1)*SLOT_BYTES).
  *     Slot 0 (VFMIG_SLOT_INVALID) is reserved and never allocated from.
  *   - The last slot, VFMIG_SLOT_USER_PAGE, is "expand-to-fill": its
- *     window runs from slot_base(USER_PAGE) up to the transient arena's
- *     base. The bottom VFMIG_IOVA_KCOHERENT_BYTES are reserved for the
+ *     window runs from slot_base(USER_PAGE) up to the top of the per-VF
+ *     window. The bottom VFMIG_IOVA_KCOHERENT_BYTES are reserved for the
  *     (future) non-migrated kcoherent sub-arena, so the user-MR IOVA
  *     range proper starts at slot_base(USER_PAGE) + KCOHERENT_BYTES.
  *
@@ -180,16 +180,6 @@ enum vfmig_iova_slot {
 #define VFMIG_IOVA_NR_SLOTS		((unsigned int)VFMIG_SLOT_NR)
 #define VFMIG_IOVA_KERNEL_NR_SLOTS	(VFMIG_IOVA_NR_SLOTS - 1U)
 #define VFMIG_IOVA_SLOT_BYTES		(510ULL << 20)	/* 510 MiB, fixed */
-
-/*
- * Transient sub-window: the topmost slice of each VF's IOVA window,
- * reserved for vfmig_iova_transient_get/put (short-lived, freelist-
- * recycled, single-page allocations -- cmd mailbox blocks). Sized to
- * hold the worst-case cmd-mailbox-cache footprint (~3900 pages); 16 MiB
- * == 4096 pages leaves headroom. It sits above the deterministic slot
- * range and must not overlap it (see static_assert below).
- */
-#define VFMIG_IOVA_TRANSIENT_BYTES	(16ULL << 20)	/* 16 MiB */
 
 /*
  * KCOHERENT sub-arena: reserved from the BOTTOM of VFMIG_SLOT_USER_PAGE's
@@ -212,9 +202,8 @@ enum vfmig_iova_slot {
 
 static_assert(VFMIG_IOVA_PER_VF >
 	      (u64)VFMIG_IOVA_KERNEL_NR_SLOTS * VFMIG_IOVA_SLOT_BYTES +
-	      VFMIG_IOVA_KCOHERENT_BYTES +
-	      VFMIG_IOVA_TRANSIENT_BYTES,
-	      "CONFIG_MLX5_VFMIG_IOVA_PER_VF_GIB too small: must fit the fixed 510-MiB kernel slots + the kcoherent carve + the transient arena + at least one user-MR IOVA");
+	      VFMIG_IOVA_KCOHERENT_BYTES,
+	      "CONFIG_MLX5_VFMIG_IOVA_PER_VF_GIB too small: must fit the fixed 510-MiB kernel slots + the kcoherent carve + at least one user-MR IOVA");
 static_assert(VFMIG_IOVA_SLOT_BYTES >= (8ULL << 20),
 	      "VFMIG_IOVA_SLOT_BYTES must be >= 8 MiB to host worst-case kernel allocations");
 
@@ -300,33 +289,6 @@ int  vfmig_iova_user_page_map_phys(struct vfmig_iova_domain *dom,
  */
 int  vfmig_iova_user_page_unmap_phys(struct vfmig_iova_domain *dom,
 				     dma_addr_t iova, size_t len);
-
-/*
- * Allocate a single transient page from @dom's transient arena (the top
- * of the per-VF window). Transient allocations are short-lived, single
- * page (@size must be <= PAGE_SIZE), freelist-recycled, and -- unlike
- * slot allocations -- do NOT have a deterministic IOVA: they never
- * appear in a SAVE blob. Intended for the cmd mailbox block cache.
- *
- * @gfp:	must not include __GFP_HIGHMEM/COMP/DMA/DMA32.
- * @vaddr_out:	kernel-virtual base of the page.
- * @iova_out:	IOVA the firmware will see.
- *
- * Returns 0 on success, -ENOMEM if the arena is exhausted, -EINVAL on a
- * bad argument, or a negative errno from the page allocator / iommu core.
- */
-int  vfmig_iova_transient_get(struct vfmig_iova_domain *dom,
-			      size_t size, gfp_t gfp,
-			      void **vaddr_out, dma_addr_t *iova_out);
-
-/*
- * Return a page previously handed out by vfmig_iova_transient_get() to
- * the arena freelist (the mapping stays installed for reuse). @iova must
- * be an arena IOVA and @size <= PAGE_SIZE. Safe with @dom == NULL; logs
- * a warning on an out-of-range IOVA or a double free.
- */
-void vfmig_iova_transient_put(struct vfmig_iova_domain *dom,
-			      dma_addr_t iova, size_t size);
 
 /*
  * Callback for vfmig_iova_for_each(): invoked once per deterministic-slot
@@ -527,20 +489,6 @@ vfmig_iova_user_page_unmap_phys(struct vfmig_iova_domain *dom,
 				dma_addr_t iova, size_t len)
 {
 	return -EOPNOTSUPP;
-}
-
-static inline int
-vfmig_iova_transient_get(struct vfmig_iova_domain *dom,
-			 size_t size, gfp_t gfp,
-			 void **vaddr_out, dma_addr_t *iova_out)
-{
-	return -EOPNOTSUPP;
-}
-
-static inline void
-vfmig_iova_transient_put(struct vfmig_iova_domain *dom,
-			 dma_addr_t iova, size_t size)
-{
 }
 
 #endif /* CONFIG_MLX5_VFMIG */
